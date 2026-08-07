@@ -17,30 +17,28 @@ const CONTRACTS = [
     eventName: 'UsernameRegistered'
   },
   {
+    // FIX: Updated to match your actual contract event arguments
     address: REQUEST_ADDRESS,
-    abi: parseAbi(['event RequestCreated(bytes32 indexed requestId, address indexed payee, uint256 amount)']),
+    abi: parseAbi(['event RequestCreated(uint256 indexed id, address indexed requester, address indexed payer, uint256 amount)']),
     eventName: 'RequestCreated'
   }
 ];
 
 export async function GET(request) {
-  // 1. GET ENV VARIABLES INSIDE THE HANDLER
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  // 2. SECURITY CHECK: Build crash se bachne ke liye
   if (!supabaseUrl || !supabaseKey) {
     return Response.json({ success: false, error: "Supabase credentials missing" }, { status: 500 });
   }
 
   try {
-    // 3. INITIALIZE CLIENT ONLY WHEN CALLED
     const supabase = createClient(supabaseUrl, supabaseKey);
-    
     const client = createPublicClient({
       transport: http('https://rpc.testnet.arc.network')
     });
 
+    // 1. Get the last indexed block from database
     const { data: lastTx } = await supabase
       .from('transactions')
       .select('blockNumber')
@@ -48,42 +46,65 @@ export async function GET(request) {
       .limit(1)
       .single();
 
-    // Fix for BigInt literals
-    let currentBlock = lastTx?.blockNumber ? BigInt(lastTx.blockNumber) : BigInt(0);
     const latestBlock = await client.getBlockNumber();
-    if (currentBlock === BigInt(0)) currentBlock = latestBlock - BigInt(50);
+    
+    // FIX: Initial range badha kar 5000 blocks kar di hai (Approx 1-2 hours of history)
+    let fromBlock = lastTx?.blockNumber ? BigInt(lastTx.blockNumber) : latestBlock - BigInt(5000);
+    if (fromBlock < 0n) fromBlock = 0n;
 
-    if (currentBlock < latestBlock) {
+    let totalSynced = 0;
+
+    if (fromBlock < latestBlock) {
       for (const contract of CONTRACTS) {
         const logs = await client.getContractEvents({
           address: contract.address,
           abi: contract.abi,
           eventName: contract.eventName,
-          fromBlock: currentBlock,
+          fromBlock: fromBlock,
           toBlock: latestBlock
         });
 
         for (const log of logs) {
-          const block = await client.getBlock({ blockNumber: log.blockNumber });
-          
-          const from = log.args.from || log.args.payee || log.args.wallet || "0x0";
-          const to = log.args.to || contract.address;
-          const amount = log.args.value || log.args.amount || BigInt(0);
+          // Identify parties based on event type
+          let from = "0x0";
+          let to = "0x0";
+          let amount = "0";
 
-          await supabase.from('transactions').upsert({
+          if (contract.eventName === 'Transfer') {
+            from = log.args.from;
+            to = log.args.to;
+            amount = log.args.value.toString();
+          } else if (contract.eventName === 'RequestCreated') {
+            from = log.args.requester;
+            to = log.args.payer;
+            amount = log.args.amount.toString();
+          } else if (contract.eventName === 'UsernameRegistered') {
+            from = log.args.wallet;
+            to = REGISTRY_ADDRESS;
+          }
+
+          // Use upsert to avoid duplicates
+          const { error: upsertError } = await supabase.from('transactions').upsert({
             hash: log.transactionHash,
             logIndex: log.logIndex,
-            from_addr: from,
-            to_addr: to,
-            amount: amount.toString(),
+            from_addr: from?.toLowerCase(),
+            to_addr: to?.toLowerCase(),
+            amount: amount,
             blockNumber: log.blockNumber.toString(),
-            timestamp: Number(block.timestamp)
+            timestamp: Math.floor(Date.now() / 1000) // Fallback to current time if block fetch is slow
           }, { onConflict: 'hash, logIndex' });
+
+          if (!upsertError) totalSynced++;
         }
       }
     }
 
-    return Response.json({ success: true, message: "Indexed successfully!" });
+    return Response.json({ 
+      success: true, 
+      message: `Sync complete! Found ${totalSynced} new events.`,
+      range: `${fromBlock.toString()} to ${latestBlock.toString()}`
+    });
+
   } catch (err) {
     console.error("Indexing error:", err.message);
     return Response.json({ success: false, error: err.message }, { status: 500 });
