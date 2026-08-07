@@ -1,6 +1,6 @@
 ﻿'use client';
 
-import { X, ArrowUpRight, ArrowDownLeft, Loader2, ShieldCheck, FileText, Clock, AlertCircle, RefreshCw } from 'lucide-react';
+import { X, ArrowUpRight, ArrowDownLeft, Loader2, ShieldCheck, FileText, Clock, AlertCircle, RefreshCw, ExternalLink } from 'lucide-react';
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { usePublicClient } from 'wagmi';
 import { formatUnits, getAddress, createPublicClient, http, type Address, type Hash, type PublicClient, type Log } from 'viem';
@@ -32,7 +32,9 @@ const CONFIG_RPC_URLS: string[] = Array.from(
   new Set(
     [
       process.env.NEXT_PUBLIC_RPC_PRIMARY,
-      ...arcTestnet.rpcUrls.default.http
+      'https://5042002.rpc.thirdweb.com',
+      'https://rpc.drpc.testnet.arc.network',
+      'https://rpc.testnet.arc.network'
     ].filter((url): url is string => Boolean(url))
   )
 );
@@ -74,7 +76,7 @@ const updateCache = (key: string, itemKey: string, value: any) => {
     cache[itemKey] = { val: value, exp: Date.now() + 1000 * 60 * 60 * 24 * 7 };
     memoryCache[key] = cache;
     localStorage.setItem(key, JSON.stringify(cache));
-  } catch {}
+  } catch { }
 };
 
 async function runWithConcurrencyLimit<T, R>(
@@ -197,8 +199,7 @@ export default function TransactionsModal({ isOpen, onClose, userAddress, onShow
     setLoading(true);
 
     const keys = getKeys(userAddress);
-    const wallet = getAddress(userAddress);
-    const walletLower = wallet.toLowerCase();
+    const walletLower = userAddress.toLowerCase();
 
     try {
       const accumulatedTxsMap = new Map<string, Transaction>();
@@ -221,20 +222,20 @@ export default function TransactionsModal({ isOpen, onClose, userAddress, onShow
       }
 
       const latest = await callWithRpcFallback<bigint>((client) => client.getBlockNumber());
-      let lastBlock = BigInt(localStorage.getItem(keys.lastBlock) || '0');
+      let lastBlockStr = localStorage.getItem(keys.lastBlock);
+      let lastBlock = lastBlockStr ? BigInt(lastBlockStr) : BigInt(0);
 
-      // Safe small window to avoid 429 rate limit
-      if (isDeep || lastBlock === 0n || lastBlock > latest) {
-        lastBlock = latest > 200n ? latest - 200n : 0n;
+      if (isDeep || lastBlock === BigInt(0) || lastBlock > latest) {
+        lastBlock = latest > BigInt(1000) ? latest - BigInt(1000) : BigInt(0);
       }
 
-      let current = isDeep ? (latest > 500n ? latest - 500n : 0n) : lastBlock;
-      let chunkSize = 25n; 
+      let current = lastBlock;
+      let chunkSize = BigInt(100); 
       let highestScannedBlock = lastBlock;
 
       while (current <= latest) {
         const toBlock = (current + chunkSize > latest) ? latest : current + chunkSize;
-        setStatus(`Scanning blocks... (${toBlock.toString()}/${latest.toString()})`);
+        setStatus(`Syncing Multi-RPC... (${toBlock.toString()}/${latest.toString()})`);
 
         try {
           const logs = await callWithRpcFallback<Log[]>((client) =>
@@ -290,10 +291,10 @@ export default function TransactionsModal({ isOpen, onClose, userAddress, onShow
                 to,
                 fromUser: fU,
                 toUser: tU,
-                amount: formatUnits(l.args.value || 0n, 18),
+                amount: formatUnits(l.args.value || BigInt(0), 18),
                 timestamp: ts,
                 blockNumber: l.blockNumber!,
-                isIncoming: to === wallet,
+                isIncoming: to.toLowerCase() === walletLower,
                 status: 'Confirmed'
               };
 
@@ -302,16 +303,12 @@ export default function TransactionsModal({ isOpen, onClose, userAddress, onShow
           }
 
           highestScannedBlock = toBlock;
-          current = toBlock + 1n;
-          
-          // Safe 1.2s delay to prevent HTTP 429 Rate Limits from Public Testnet RPC
-          await new Promise((res) => setTimeout(res, 1200));
+          current = toBlock + BigInt(1);
+          await new Promise((res) => setTimeout(res, 800));
 
         } catch (err: any) {
-          console.warn(`RPC Rate Limited / Error on range:`, err?.message);
-          setError("Testnet RPC rate-limited (429). Retrying with slowdown...");
-          await new Promise((res) => setTimeout(res, 3000));
-          current = toBlock + 1n; // Skip faulty chunk to prevent freezing
+          await new Promise((res) => setTimeout(res, 2000));
+          current = toBlock + BigInt(1); 
         }
       }
 
@@ -321,49 +318,45 @@ export default function TransactionsModal({ isOpen, onClose, userAddress, onShow
 
       const finalSortedTxs = Array.from(accumulatedTxsMap.values()).sort((a, b) => {
         if (b.blockNumber !== a.blockNumber) return Number(b.blockNumber - a.blockNumber);
-        if (b.timestamp !== a.timestamp) return b.timestamp - a.timestamp;
         return b.logIndex - a.logIndex;
       }).slice(0, 100);
 
       try {
         const serializableFinal = finalSortedTxs.map(t => ({ ...t, blockNumber: t.blockNumber.toString() }));
         localStorage.setItem(keys.history, JSON.stringify(serializableFinal));
-      } catch {}
+      } catch { }
 
       setAllTxs(finalSortedTxs);
       setStatus('Sync Complete');
     } catch (err: any) {
-      setError("RPC connection throttled. Please try again in 10 seconds.");
+      setError("RPC Throttle: Use manual sync in 10s");
     } finally {
       setLoading(false);
       syncInProgress.current = false;
     }
-  }, [userAddress, callWithRpcFallback]);
+  }, [userAddress, callWithRpcFallback, resolveId, getTs]);
 
   useEffect(() => {
     if (isOpen) runSync();
-    const handleRemoteSync = () => runSync();
-    window.addEventListener('arcpay_request_sync', handleRemoteSync);
-    return () => window.removeEventListener('arcpay_request_sync', handleRemoteSync);
   }, [isOpen, runSync]);
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 animate-in fade-in duration-300">
-      <div className="absolute inset-0 bg-black/80 backdrop-blur-xl" onClick={onClose} />
-      <div className="relative w-full max-w-2xl bg-[#0A0A0A] border border-white/10 rounded-[40px] shadow-2xl flex flex-col max-h-[90vh] overflow-hidden text-white">
+    <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 animate-in fade-in duration-300 font-sans leading-none">
+      <div className="absolute inset-0 bg-black/90 backdrop-blur-3xl" onClick={onClose} />
+      <div className="relative w-full max-w-2xl bg-[#0c0e14] border border-white/10 rounded-[44px] shadow-3xl flex flex-col max-h-[85vh] overflow-hidden text-white">
 
         <div className="p-10 border-b border-white/5 flex justify-between items-center bg-black/20">
-          <div className="space-y-1">
-            <h2 className="text-3xl font-black uppercase italic tracking-tighter">Blockchain Ledger</h2>
+          <div className="space-y-2">
+            <h2 className="text-3xl font-black uppercase italic tracking-tighter">On-Chain Ledger</h2>
             <div className={`text-[10px] font-black uppercase italic flex items-center gap-2 ${loading ? 'text-amber-500' : 'text-emerald-500'}`}>
               {loading ? <Loader2 size={12} className="animate-spin" /> : <ShieldCheck size={12} />}
-              {loading ? status : "On-Chain Identity Verified"}
+              {loading ? status : "On-Chain History Verified"}
             </div>
           </div>
-          <div className="flex gap-2">
-            <button onClick={() => runSync(true)} disabled={loading} className="p-3 bg-white/5 rounded-2xl hover:bg-white/10 transition-all border border-white/5" title="Refresh">
+          <div className="flex gap-3">
+            <button onClick={() => runSync(true)} disabled={loading} className="p-3 bg-blue-600/10 rounded-2xl text-blue-500 border border-blue-500/10 hover:bg-blue-600 hover:text-white transition-all">
               <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
             </button>
             <button onClick={onClose} className="p-3 bg-white/5 rounded-2xl hover:text-rose-500 transition-all border border-white/5"><X size={20} /></button>
@@ -376,35 +369,38 @@ export default function TransactionsModal({ isOpen, onClose, userAddress, onShow
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto p-10 custom-scrollbar space-y-4">
+        <div className="flex-1 overflow-y-auto p-10 custom-scrollbar space-y-4 bg-black/20">
           {allTxs.length === 0 && !loading ? (
-            <div className="py-24 text-center opacity-20 uppercase font-black tracking-[0.4em] text-xs flex flex-col items-center gap-4">
-              <FileText size={48} /> No Transactions Found
+            <div className="py-24 text-center opacity-20 uppercase font-black tracking-[0.4em] text-xs flex flex-col items-center gap-4 italic">
+              <FileText size={48} /> No Settlements Found
             </div>
           ) : (
-            allTxs.map((tx) => (
-              <div key={`${tx.hash}-${tx.logIndex}`} onClick={() => onShowReceipt(tx)} className="bg-white/5 border border-white/5 p-6 rounded-[32px] flex justify-between items-center group hover:bg-white/[0.08] cursor-pointer transition-all border-l-4 border-l-transparent hover:border-l-blue-500">
-                <div className="flex items-center gap-6">
-                  <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-inner ${tx.isIncoming ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'}`}>
-                    {tx.isIncoming ? <ArrowDownLeft size={24} /> : <ArrowUpRight size={24} />}
+            allTxs.map((tx) => {
+              const isSent = tx.from.toLowerCase() === userAddress?.toLowerCase();
+              return (
+                <div key={`${tx.hash}-${tx.logIndex}`} onClick={() => onShowReceipt(tx)} className="bg-white/5 border border-white/5 p-6 rounded-[36px] flex justify-between items-center group hover:bg-white/[0.08] cursor-pointer transition-all">
+                  <div className="flex items-center gap-6">
+                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-inner ${!isSent ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'}`}>
+                      {!isSent ? <ArrowDownLeft size={24} /> : <ArrowUpRight size={24} />}
+                    </div>
+                    <div className="text-left space-y-2">
+                      <p className="text-base font-black uppercase italic truncate max-w-[220px]">
+                        {!isSent ? `From ${tx.fromUser}` : `To ${tx.toUser}`}
+                      </p>
+                      <div className="flex items-center gap-3">
+                         <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2"><Clock size={10} /> {new Date(tx.timestamp * 1000).toLocaleTimeString()}</span>
+                         <a href={`https://testnet.arcscan.app/tx/${tx.hash}`} target="_blank" className="text-[8px] bg-white/5 px-2 py-0.5 rounded text-blue-500 font-bold uppercase flex items-center gap-1">Proof <ExternalLink size={8}/></a>
+                      </div>
+                    </div>
                   </div>
-                  <div className="text-left space-y-1">
-                    <p className="text-base font-black uppercase italic truncate max-w-[200px]">
-                      {tx.isIncoming ? `From ${tx.fromUser}` : `To ${tx.toUser}`}
-                    </p>
-                    <p className="text-[9px] font-bold text-slate-600 uppercase tracking-widest flex items-center gap-2">
-                      <Clock size={10} /> {new Date(tx.timestamp * 1000).toLocaleString()}
-                      <span className={tx.status === 'Confirmed' ? 'text-emerald-500' : 'text-rose-500'}>• {tx.status}</span>
+                  <div className="text-right space-y-2">
+                    <p className={`text-2xl font-black italic leading-none ${!isSent ? 'text-emerald-500' : 'text-rose-500'}`}>
+                      {!isSent ? '+' : '-'}{tx.amount} <span className="text-[10px] opacity-20 font-bold uppercase">USDC</span>
                     </p>
                   </div>
                 </div>
-                <div className="text-right">
-                  <p className={`text-2xl font-black italic leading-none ${tx.isIncoming ? 'text-emerald-500' : 'text-rose-500'}`}>
-                    {tx.isIncoming ? '+' : '-'}{tx.amount} <span className="text-[10px] opacity-20 font-bold not-italic text-white">USDC</span>
-                  </p>
-                </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>

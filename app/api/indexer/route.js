@@ -1,13 +1,8 @@
 import { createPublicClient, http, parseAbi } from 'viem';
 import { createClient } from '@supabase/supabase-js';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
-
 const USDC_ADDRESS = "0x3600000000000000000000000000000000000000"; 
-const REGISTRY_ADDRESS = "0x4Dcfb92822EdC76c98879023A05fD9a65FAA6041";
+const REGISTRY_ADDRESS = "0x4Dcfb92822EdC76c98879023A05fd9a65FAA6041";
 const REQUEST_ADDRESS = "0x73D554E9A6D531c11829D13e2157B43603808022";
 
 const CONTRACTS = [
@@ -29,7 +24,19 @@ const CONTRACTS = [
 ];
 
 export async function GET(request) {
+  // 1. GET ENV VARIABLES INSIDE THE HANDLER
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  // 2. SECURITY CHECK: Build crash se bachne ke liye
+  if (!supabaseUrl || !supabaseKey) {
+    return Response.json({ success: false, error: "Supabase credentials missing" }, { status: 500 });
+  }
+
   try {
+    // 3. INITIALIZE CLIENT ONLY WHEN CALLED
+    const supabase = createClient(supabaseUrl, supabaseKey);
+    
     const client = createPublicClient({
       transport: http('https://rpc.testnet.arc.network')
     });
@@ -41,9 +48,10 @@ export async function GET(request) {
       .limit(1)
       .single();
 
-    let currentBlock = lastTx?.blockNumber ? BigInt(lastTx.blockNumber) : 0n;
+    // Fix for BigInt literals
+    let currentBlock = lastTx?.blockNumber ? BigInt(lastTx.blockNumber) : BigInt(0);
     const latestBlock = await client.getBlockNumber();
-    if (currentBlock === 0n) currentBlock = latestBlock - 50n;
+    if (currentBlock === BigInt(0)) currentBlock = latestBlock - BigInt(50);
 
     if (currentBlock < latestBlock) {
       for (const contract of CONTRACTS) {
@@ -60,7 +68,7 @@ export async function GET(request) {
           
           const from = log.args.from || log.args.payee || log.args.wallet || "0x0";
           const to = log.args.to || contract.address;
-          const amount = log.args.value || log.args.amount || 0n;
+          const amount = log.args.value || log.args.amount || BigInt(0);
 
           await supabase.from('transactions').upsert({
             hash: log.transactionHash,
