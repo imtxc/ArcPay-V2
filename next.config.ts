@@ -1,15 +1,15 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   typescript: {
-    // TypeScript errors ignore honge deployment ke waqt
+    // TypeScript errors ko ignore karega build ke waqt
     ignoreBuildErrors: true,
   },
   eslint: {
-    // ESLint errors ignore honge deployment ke waqt
+    // ESLint errors ko ignore karega build ke waqt
     ignoreDuringBuilds: true,
   },
-  // Privy compatibility fix
-  transpilePackages: ['@privy-io/react-auth', '@stripe/stripe-js'],
+  // Privy aur standard compatibility
+  transpilePackages: ['@privy-io/react-auth'],
 };
 
 export default nextConfig;
