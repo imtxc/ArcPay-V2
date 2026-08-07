@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { usePrivy, useWallets } from '@privy-io/react-auth';
 import { useReadContract, usePublicClient } from 'wagmi';
@@ -124,6 +124,10 @@ export default function Dashboard() {
     }
   };
 
+    useEffect(() => {
+    // Silent Background Sync: Jab bhi koi site kholega, database refresh hoga
+    fetch('/api/indexer').catch(() => console.log("Syncing..."));
+  }, []);
   const handleLogout = async () => {
     setActiveModal(null);
     try {
