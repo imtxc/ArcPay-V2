@@ -8,12 +8,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // --- UNIVERSAL RED SCREEN BLOCKER ---
 if (typeof window !== 'undefined') {
-  const originalError = console.error;
-  console.error = (...args) => {
-    // Error message ko poora string banao taaki kuch bhi na choote
+  const originalError = window.console.error;
+  window.console.error = (...args) => {
     const errorString = args.map(arg => String(arg)).join(' ');
     
-    // Agar inme se koi bhi word mile, toh Next.js ko mat batao (return ho jao)
+    // In warnings ko block karo taaki Next.js crash screen na dikhaye
     if (
       errorString.includes('isActive') || 
       errorString.includes('isactive') || 
@@ -22,13 +21,25 @@ if (typeof window !== 'undefined') {
     ) {
       return; 
     }
-    originalError.apply(console, args);
+    originalError.apply(window.console, args);
   };
 }
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = useState(false);
-  const [queryClient] = useState(() => new QueryClient());
+
+  // ✅ CRASH FIX: QueryClient setup with focus refetch disabled
+  const [queryClient] = useState(() => new QueryClient({
+    defaultOptions: {
+      queries: {
+        // Jab user ArcScan se wapas aayega, toh ye auto-refresh nahi karega.
+        // Isse "This page couldn't load" wala error hamesha ke liye khatam ho jayega.
+        refetchOnWindowFocus: false, 
+        retry: 1,
+        staleTime: 60000,
+      },
+    },
+  }));
 
   useEffect(() => {
     setMounted(true);
@@ -39,15 +50,21 @@ export function Providers({ children }: { children: React.ReactNode }) {
       appId={process.env.NEXT_PUBLIC_PRIVY_APP_ID || ""}
       config={{
         loginMethods: ['email', 'wallet'],
-        appearance: { theme: 'dark', accentColor: '#2563eb' },
-        embeddedWallets: { ethereum: { createOnLogin: 'users-without-wallets' } },
+        appearance: { 
+          theme: 'dark', 
+          accentColor: '#2563eb',
+          showWalletLoginFirst: true 
+        },
+        embeddedWallets: { 
+          ethereum: { createOnLogin: 'users-without-wallets' } 
+        },
         defaultChain: arcTestnet,
         supportedChains: [arcTestnet],
       }}
     >
       <WagmiProvider config={wagmiConfig}>
         <QueryClientProvider client={queryClient}>
-          {/* Children render only when mounted to prevent hydration flash */}
+          {/* Hydration Guard */}
           <div style={{ display: mounted ? 'contents' : 'none' }}>
             {children}
           </div>

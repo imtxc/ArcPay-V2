@@ -12,6 +12,7 @@ import { parseUnits, isAddress, encodeFunctionData, getAddress } from 'viem';
 import { useArcPay } from '@/hooks/useArcPay';
 import { REGISTRY_ADDRESS, REGISTRY_ABI, USDC_ADDRESS, ERC20_ABI } from '@/lib/constants';
 
+// MODAL IMPORTS
 import Sidebar from '@/components/Sidebar';
 import RequestHub from '@/components/RequestHub';
 import TransactionHistory from '@/components/TransactionHistory';
@@ -28,6 +29,7 @@ import Insights from '@/components/Insights';
 import SavedHub from '@/components/SavedHub';
 import ContactsModal from '@/components/ContactsModal';
 import OutgoingModal from '@/components/OutgoingModal';
+import NotificationsModal from '@/components/NotificationsModal'; // ✅ Naya Premium Modal
 import { QRCodeSVG } from 'qrcode.react';
 
 export default function Dashboard() {
@@ -69,9 +71,16 @@ export default function Dashboard() {
       type, 
       time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) 
     };
-    const updated = [newNotif, ...notifications].slice(0, 10);
+    const updated = [newNotif, ...notifications].slice(0, 15); // Increased limit slightly
     setNotifications(updated);
     localStorage.setItem('arcpay_notifs', JSON.stringify(updated));
+  };
+
+  // ✅ New: Clear all notifications feature
+  const clearNotifications = () => {
+    setNotifications([]);
+    localStorage.removeItem('arcpay_notifs');
+    showToast("Security Logs Purged", "info");
   };
 
   const showToast = (msg: string, type = 'success') => {
@@ -125,9 +134,9 @@ export default function Dashboard() {
   };
 
     useEffect(() => {
-    // Silent Background Sync
     fetch('/api/indexer').catch(() => console.log("Syncing..."));
   }, []);
+
   const handleLogout = async () => {
     setActiveModal(null);
     try {
@@ -265,11 +274,11 @@ export default function Dashboard() {
       </AnimatePresence>
 
       <main className="flex-1 h-screen overflow-y-auto custom-scrollbar p-10 scroll-smooth">
-        <div className="max-w-[1600px] mx-auto space-y-10 pb-24 leading-none text-left">
+        <div className="max-w-[1600px] mx-auto space-y-10 pb-24 leading-none text-left text-white font-sans">
           
           <div className="flex justify-between items-center leading-none">
             <div className="space-y-1 text-left">
-              <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em] mb-1 italic opacity-50 text-left uppercase">PERMANENT ON-CHAIN IDENTITY</p>
+              <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em] mb-1 italic opacity-50 text-left">PERMANENT ON-CHAIN IDENTITY</p>
               <h1 className="text-2xl font-black italic tracking-tighter uppercase flex items-center gap-4 leading-none text-white text-left">
                 {username ? (
                   <div className="flex items-center gap-3">
@@ -283,7 +292,7 @@ export default function Dashboard() {
             <div className="flex-1 max-w-md px-10">
                <div className="relative group">
                   <UserSearch className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-700 group-focus-within:text-blue-500 transition-colors" size={18}/>
-                  <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleGlobalSearch()} placeholder="Verify Arc Handle..." className="w-full bg-white/5 border border-white/5 p-4 pl-14 rounded-2xl text-[12px] font-bold outline-none focus:border-blue-500/50 transition-all placeholder:text-slate-800" />
+                  <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleGlobalSearch()} placeholder="Verify Arc Handle..." className="w-full bg-white/5 border border-white/5 p-4 pl-14 rounded-2xl text-[12px] font-bold outline-none focus:border-blue-500/50 transition-all placeholder:text-slate-800 text-white" />
                </div>
             </div>
 
@@ -306,11 +315,11 @@ export default function Dashboard() {
           <div className="grid grid-cols-12 gap-10 items-start pb-20 text-left">
              <div className="col-span-3 space-y-10">
                 <div id="pay-section-anchor" className="bg-[#0c0e14] border border-white/5 rounded-[44px] p-10 space-y-8 shadow-3xl border-t-white/10 text-left leading-none">
-                   <div className="flex items-center gap-2"><Lock size={12} className="text-slate-700"/><h3 className="text-[12px] font-black uppercase tracking-[0.3em] text-slate-500 italic font-black uppercase">PAY BY ID</h3></div>
+                   <div className="flex items-center gap-2"><Lock size={12} className="text-slate-700"/><h3 className="text-[12px] font-black uppercase tracking-[0.3em] text-slate-500 italic font-black">PAY BY ID</h3></div>
                    <div className="space-y-8 text-white pt-4">
-                      <input value={recipient} onChange={e => setRecipient(e.target.value)} placeholder="@username..." className="w-full bg-black/40 border border-white/5 p-7 rounded-3xl text-[10px] font-mono outline-none focus:border-blue-500/40 leading-none"/>
+                      <input value={recipient} onChange={e => setRecipient(e.target.value)} placeholder="@username..." className="w-full bg-black/40 border border-white/5 p-7 rounded-3xl text-[10px] font-mono outline-none focus:border-blue-500/40 text-white" />
                       <div className="relative leading-none">
-                        <input type="text" inputMode="decimal" value={amount} onChange={e => { const val = e.target.value; if (val === '' || /^\d*.?\d*$/.test(val)) setAmount(val); }} placeholder="0.00" className="w-full bg-black/40 border border-white/5 p-7 rounded-3xl text-4xl font-black outline-none italic leading-none text-white [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"/>
+                        <input type="text" inputMode="decimal" value={amount} onChange={e => { const val = e.target.value; if (val === '' || /^\d*.?\d*$/.test(val)) setAmount(val); }} placeholder="0.00" className="w-full bg-black/40 border border-white/5 p-7 rounded-3xl text-4xl font-black outline-none italic text-white" />
                         <div className="absolute right-6 top-1/2 -translate-y-1/2 flex items-center gap-2"><button onClick={() => setAmount(usdcBalance)} className="text-[9px] font-black uppercase text-blue-500 bg-blue-500/10 px-2 py-1.5 rounded-lg">MAX</button></div>
                       </div>
                       <button disabled={isPaying || !recipient || !amount} onClick={handleEmbeddedPay} className="w-full bg-blue-600 py-3.5 rounded-2xl font-black uppercase italic tracking-widest shadow-xl hover:bg-blue-500 active:scale-95 transition-all flex items-center justify-center gap-2 text-xs disabled:opacity-30">
@@ -342,20 +351,13 @@ export default function Dashboard() {
         </div>
       </main>
 
-      {/* ALL MODALS */}
-      <AnimatePresence>{activeModal === 'notifications' && (
-        <div className="fixed inset-0 z-[250] flex items-center justify-center bg-black/90 backdrop-blur-xl p-4 font-sans leading-none">
-          <div className="bg-[#0c0e14] border border-white/10 w-full max-w-md rounded-[44px] p-10 relative shadow-3xl overflow-hidden animate-in zoom-in duration-300">
-             <button onClick={() => setActiveModal(null)} className="absolute right-8 top-8 text-slate-500 hover:text-white transition-all"><X size={20}/></button>
-             <h3 className="text-2xl font-black uppercase italic tracking-tighter text-white mb-8">System Alerts</h3>
-             <div className="space-y-3 max-h-[50vh] overflow-y-auto custom-scrollbar pr-2 text-left text-white">
-                {notifications.length === 0 ? <p className="opacity-20 uppercase font-black text-center py-10 text-[10px]">No Security Logs</p> :
-                 notifications.map((n) => ( <div key={`notif-${n.id}`} className="p-5 bg-white/5 border border-white/5 rounded-3xl flex justify-between items-center text-white"><p className="text-[11px] font-black text-white uppercase italic leading-tight">{n.msg}</p><span className="text-[9px] font-bold text-slate-700 ml-4">{n.time}</span></div> ))
-                }
-             </div>
-          </div>
-        </div>
-      )}</AnimatePresence>
+      {/* ✅ NEW: Integrated Premium Notifications Modal */}
+      <NotificationsModal 
+        isOpen={activeModal === 'notifications'} 
+        onClose={() => setActiveModal(null)} 
+        notifications={notifications}
+        onClear={clearNotifications}
+      />
 
       <ReceiptModal isOpen={!!receiptData} onClose={() => setReceiptData(null)} data={receiptData} />
       <ContactsModal isOpen={activeModal === 'contacts'} onClose={() => setActiveModal(null)} showToast={showToast} refetchBalance={refetch} onPay={handlePayFromContact} onRequest={handleRequestFromContact} />
@@ -366,7 +368,6 @@ export default function Dashboard() {
       <ScannerModal isOpen={activeModal === 'scan'} onClose={() => setActiveModal(null)} onScan={(data) => { setRecipient(data); setActiveModal(null); showToast("Target Located"); }} />
       <ProfileModal isOpen={activeModal === 'profile'} onClose={() => setActiveModal(null)} address={address || ""} username={username} showToast={showToast} />
       
-      {/* FIX: Added userAddress prop here to clear the error */}
       <SettingsModal 
         isOpen={activeModal === 'settings'} 
         onClose={() => setActiveModal(null)} 
