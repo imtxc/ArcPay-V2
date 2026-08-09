@@ -15,9 +15,10 @@ const CONTRACTS = [
     abi: parseAbi(['event PaymentSent(address indexed from, address indexed to, uint256 amount, string _reference)']), 
     eventName: 'PaymentSent' 
   }
-]; // <--- Yahan array close hona zaroori hai
+];
 
 export async function GET(request) {
+  const startTime = Date.now(); // Time check shuru
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -26,25 +27,28 @@ export async function GET(request) {
   try {
     const supabase = createClient(supabaseUrl, supabaseKey);
     const client = createPublicClient({
-      chain: { id: 5042002, name: 'Arc' },
       transport: fallback([
         http('https://rpc.testnet.arc.network'),
-        http('https://rpc.drpc.testnet.arc.network'),
-        http('https://5042002.rpc.thirdweb.com')
-      ], { rank: true })
+        http('https://rpc.drpc.testnet.arc.network')
+      ])
     });
 
     const { data: lastTx } = await supabase.from('transactions').select('blockNumber').order('blockNumber', { ascending: false }).limit(1).maybeSingle();
     const latestBlock = await client.getBlockNumber();
     
-    let targetFromBlock = lastTx?.blockNumber ? BigInt(lastTx.blockNumber) + 1n : latestBlock - BigInt(100000);
+    // Vercel Safety: Agar naya hai toh sirf 20,000 blocks piche jao (Timeout se bachne ke liye)
+    let targetFromBlock = lastTx?.blockNumber ? BigInt(lastTx.blockNumber) + 1n : latestBlock - BigInt(20000);
     if (targetFromBlock < 0n) targetFromBlock = 0n;
 
     let totalSynced = 0;
-    const CHUNK_SIZE = 15000n; 
+    const CHUNK_SIZE = 5000n; // Chote batches taaki speed bani rahe
 
     for (let current = targetFromBlock; current < latestBlock; current += CHUNK_SIZE) {
+      // 🚨 Vercel Timeout Guard: Agar 8 seconds ho gaye hain, toh kaam roko aur response do
+      if (Date.now() - startTime > 8000) break; 
+
       const toBlock = (current + CHUNK_SIZE > latestBlock) ? latestBlock : current + CHUNK_SIZE;
+
       for (const contract of CONTRACTS) {
         try {
           const logs = await client.getContractEvents({
@@ -54,15 +58,17 @@ export async function GET(request) {
             fromBlock: current,
             toBlock: toBlock
           });
+
           for (const log of logs) {
             const args = log.args;
             let from = "0x0", to = "0x0", amount = "0";
+
             if (contract.eventName === 'Transfer') { from = args.from; to = args.to; amount = args.value?.toString(); }
             else if (contract.eventName === 'RequestCreated') { from = args.requester; to = args.payer; amount = args.amount?.toString(); }
             else if (contract.eventName === 'PaymentSent') { from = args.from; to = args.to; amount = args.amount?.toString(); }
             else if (contract.eventName === 'UsernameRegistered') { from = args.wallet; to = REGISTRY_ADDRESS; }
 
-            const { error: upsertError } = await supabase.from('transactions').upsert({
+            await supabase.from('transactions').upsert({
               hash: log.transactionHash,
               logIndex: log.logIndex,
               from_addr: from?.toLowerCase() || "0x0",
@@ -72,13 +78,15 @@ export async function GET(request) {
               timestamp: Math.floor(Date.now() / 1000),
               eventName: contract.eventName
             }, { onConflict: 'hash, logIndex' });
-            if (!upsertError) totalSynced++;
+
+            totalSynced++;
           }
-        } catch (e) { }
+        } catch (e) { console.error("Batch Error", e.message); }
       }
-      if (totalSynced > 500) break; 
     }
-    return Response.json({ success: true, synced: totalSynced });
+
+    return Response.json({ success: true, synced: totalSynced, nextStart: latestBlock.toString() });
+
   } catch (err) {
     return Response.json({ success: false, error: err.message }, { status: 500 });
   }
