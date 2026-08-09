@@ -9,12 +9,7 @@ const CONTRACTS = [
   { name: 'USDC', address: USDC_ADDRESS, abi: parseAbi(['event Transfer(address indexed from, address indexed to, uint256 value)']), eventName: 'Transfer' },
   { name: 'Registry', address: REGISTRY_ADDRESS, abi: parseAbi(['event UsernameRegistered(address indexed wallet, string username)']), eventName: 'UsernameRegistered' },
   { name: 'PaymentRequest', address: REQUEST_ADDRESS, abi: parseAbi(['event RequestCreated(uint256 indexed id, address indexed requester, address indexed payer, uint256 amount, string requesterUsername, string note)']), eventName: 'RequestCreated' },
-  { 
-    name: 'ArcPay Protocol', 
-    address: REQUEST_ADDRESS, 
-    abi: parseAbi(['event PaymentSent(address indexed from, address indexed to, uint256 amount, string _reference)']), 
-    eventName: 'PaymentSent' 
-  }
+  { name: 'ArcPay Protocol', address: REQUEST_ADDRESS, abi: parseAbi(['event PaymentSent(address indexed from, address indexed to, uint256 amount, string _reference)']), eventName: 'PaymentSent' }
 ];
 
 export async function GET(request) {
@@ -27,47 +22,31 @@ export async function GET(request) {
   try {
     const supabase = createClient(supabaseUrl, supabaseKey);
     const client = createPublicClient({
-      transport: fallback([
-        http('https://rpc.testnet.arc.network'),
-        http('https://rpc.drpc.testnet.arc.network'),
-        http('https://5042002.rpc.thirdweb.com')
-      ])
+      transport: fallback([http('https://rpc.testnet.arc.network'), http('https://rpc.drpc.testnet.arc.network')])
     });
 
-    const { data: lastTx } = await supabase.from('transactions').select('blockNumber').order('blockNumber', { ascending: false }).limit(1).maybeSingle();
+    // maybeSingle use karein taaki empty table par crash na ho
+    const { data: lastTx } = await supabase.from('transactions').select('block_number').order('block_number', { ascending: false }).limit(1).maybeSingle();
     const latestBlock = await client.getBlockNumber();
     
-    // Safety Range: 20k blocks for first sync to avoid Vercel timeout
-    let current = lastTx?.blockNumber ? BigInt(lastTx.blockNumber) + 1n : latestBlock - BigInt(20000);
+    let current = lastTx?.block_number ? BigInt(lastTx.block_number) + 1n : latestBlock - BigInt(20000);
     if (current < 0n) current = 0n;
 
     let totalSynced = 0;
     const CHUNK_SIZE = 5000n;
-    const blockTimeCache = new Map(); // Cache to avoid multiple getBlock calls
 
     while (current <= latestBlock) {
-      // 🚨 Vercel Hobby Guard (9 seconds limit)
-      if (Date.now() - startTime > 9000) break;
+      if (Date.now() - startTime > 8500) break; // Timeout Guard
 
       const toBlock = (current + CHUNK_SIZE > latestBlock) ? latestBlock : current + CHUNK_SIZE;
 
       for (const contract of CONTRACTS) {
         try {
           const logs = await client.getContractEvents({
-            address: contract.address,
-            abi: contract.abi,
-            eventName: contract.eventName,
-            fromBlock: current,
-            toBlock: toBlock
+            address: contract.address, abi: contract.abi, eventName: contract.eventName, fromBlock: current, toBlock: toBlock
           });
 
           for (const log of logs) {
-            // ✅ GET REAL TIMESTAMP
-            if (!blockTimeCache.has(log.blockNumber)) {
-              const block = await client.getBlock({ blockNumber: log.blockNumber });
-              blockTimeCache.set(log.blockNumber, Number(block.timestamp));
-            }
-
             const args = log.args;
             let from = "0x0", to = "0x0", amount = "0";
 
@@ -76,25 +55,26 @@ export async function GET(request) {
             else if (contract.eventName === 'PaymentSent') { from = args.from; to = args.to; amount = args.amount?.toString(); }
             else if (contract.eventName === 'UsernameRegistered') { from = args.wallet; to = REGISTRY_ADDRESS; }
 
+            // DB columns are lowercase now
             const { error: upsertError } = await supabase.from('transactions').upsert({
               hash: log.transactionHash,
-              logIndex: log.logIndex,
+              logindex: log.logIndex, 
               from_addr: from?.toLowerCase() || "0x0",
               to_addr: to?.toLowerCase() || "0x0",
               amount: amount || "0",
-              blockNumber: log.blockNumber.toString(),
-              timestamp: blockTimeCache.get(log.blockNumber), // Saved Real Time
-              eventName: contract.eventName
-            }, { onConflict: 'hash, logIndex' });
+              block_number: log.blockNumber.toString(),
+              timestamp: Math.floor(Date.now() / 1000),
+              event_name: contract.eventName
+            }, { onConflict: 'hash, logindex' });
 
             if (!upsertError) totalSynced++;
           }
-        } catch (e) { console.error("Sync Error:", e.message); }
+        } catch (e) { console.error("Batch Error", e.message); }
       }
       current = toBlock + 1n;
     }
 
-    return Response.json({ success: true, synced: totalSynced, finished: current > latestBlock });
+    return Response.json({ success: true, synced: totalSynced });
   } catch (err) {
     return Response.json({ success: false, error: err.message }, { status: 500 });
   }
