@@ -4,26 +4,30 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { ArrowUpRight, ArrowDownLeft, RefreshCw, Loader2, History, Clock } from 'lucide-react';
 import { type Transaction } from './TransactionsModal';
 
+// FIX: Proper interface with Promise return type to satisfy Next.js linter
+interface TransactionHistoryProps {
+  userAddress: string | undefined;
+  onShowReceipt: (tx: Transaction) => void | Promise<void>; // Added Promise type
+}
+
 export default function TransactionHistory({ 
   userAddress, 
   onShowReceipt 
-}: { 
-  userAddress: string | undefined; 
-  onShowReceipt: (tx: Transaction) => void; 
-}) {
+}: TransactionHistoryProps) {
   const [txs, setTxs] = useState<Transaction[]>([]);
   const [syncing, setSyncing] = useState(false);
   const syncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // --- Local Storage Loader with Safe BigInt & JSON Handling ---
+  // --- Local Storage Loader ---
   const loadLocal = useCallback(() => {
-    if (!userAddress) {
+    if (typeof window === 'undefined' || !userAddress) {
       setTxs([]);
       return;
     }
+
     const key = `ap_h_${userAddress.toLowerCase()}`;
     try {
-      const raw = localStorage.getItem(key);
+      const raw = window.localStorage.getItem(key);
       if (!raw) {
         setTxs([]);
         return;
@@ -34,7 +38,7 @@ export default function TransactionHistory({
           .filter(t => t && t.hash)
           .map(t => ({
             ...t,
-            // Safely handle blockNumber whether it's stored as string, number, or missing
+            // Handling BigInt safely
             blockNumber: t.blockNumber !== undefined && t.blockNumber !== null 
               ? BigInt(t.blockNumber) 
               : 0n
@@ -48,9 +52,10 @@ export default function TransactionHistory({
     }
   }, [userAddress]);
 
-  // --- Sync Request Handler with Safety Timeout ---
+  // --- Sync Request Handler ---
   const handleSync = () => {
-    if (syncing) return;
+    if (syncing || typeof window === 'undefined') return;
+    
     setSyncing(true);
 
     if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
@@ -73,12 +78,16 @@ export default function TransactionHistory({
       }
     };
 
-    window.addEventListener('ap_sync_done', onDone);
-    window.addEventListener('storage', loadLocal);
+    if (typeof window !== 'undefined') {
+      window.addEventListener('ap_sync_done', onDone);
+      window.addEventListener('storage', loadLocal);
+    }
 
     return () => {
-      window.removeEventListener('ap_sync_done', onDone);
-      window.removeEventListener('storage', loadLocal);
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('ap_sync_done', onDone);
+        window.removeEventListener('storage', loadLocal);
+      }
       if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
     };
   }, [userAddress, loadLocal]);
@@ -86,7 +95,7 @@ export default function TransactionHistory({
   return (
     <div className="bg-white/5 border border-white/5 rounded-[32px] p-6 text-white">
       <div className="flex items-center justify-between mb-6 px-2">
-        <h3 className="text-xs font-black uppercase tracking-[0.2em] italic text-slate-400">
+        <h3 className="text-xs font-black uppercase tracking-[0.2em] italic text-slate-400 leading-none">
           Recent Activity
         </h3>
         <button 
@@ -105,7 +114,7 @@ export default function TransactionHistory({
 
       <div className="space-y-3">
         {txs.length === 0 ? (
-          <div className="py-10 text-center opacity-20 uppercase font-black text-[9px] flex flex-col items-center gap-2">
+          <div className="py-10 text-center opacity-20 uppercase font-black text-[9px] flex flex-col items-center gap-2 leading-none">
             <History size={24} /> 
             {syncing ? "Syncing Blockchain..." : "No Activity Found"}
           </div>
@@ -116,7 +125,7 @@ export default function TransactionHistory({
               <button 
                 key={`${tx.hash}-${tx.logIndex || 0}`} 
                 onClick={() => onShowReceipt(tx)} 
-                className="w-full flex items-center justify-between p-4 bg-white/5 border border-white/5 rounded-[22px] group hover:border-blue-500/40 hover:bg-white/[0.08] transition-all text-white"
+                className="w-full flex items-center justify-between p-4 bg-white/5 border border-white/5 rounded-[22px] group hover:border-blue-500/40 hover:bg-white/[0.08] transition-all text-white leading-none"
               >
                 <div className="flex items-center gap-3 text-left overflow-hidden">
                   <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 shadow-inner ${
@@ -124,18 +133,18 @@ export default function TransactionHistory({
                   }`}>
                     {isInc ? <ArrowDownLeft size={18} /> : <ArrowUpRight size={18} />}
                   </div>
-                  <div className="overflow-hidden">
+                  <div className="overflow-hidden leading-tight">
                     <p className="text-[11px] font-black uppercase italic leading-none truncate max-w-[140px]">
                       {isInc ? `From ${tx.fromUser || 'Unknown'}` : `To ${tx.toUser || 'Unknown'}`}
                     </p>
-                    <p className="text-[8px] font-bold text-slate-500 uppercase mt-1 flex items-center gap-1">
+                    <p className="text-[8px] font-bold text-slate-500 uppercase mt-1 flex items-center gap-1 leading-none">
                       <Clock size={8} /> 
                       {tx.timestamp ? new Date(tx.timestamp * 1000).toLocaleDateString() : 'Recent'}
                     </p>
                   </div>
                 </div>
-                <div className="text-right flex-shrink-0">
-                  <p className={`text-[13px] font-black italic ${isInc ? 'text-emerald-500' : 'text-rose-500'}`}>
+                <div className="text-right flex-shrink-0 leading-none">
+                  <p className={`text-[13px] font-black italic ${isInc ? 'text-emerald-500' : 'text-rose-500'} leading-none`}>
                     {isInc ? '+' : '-'}{tx.amount} <span className="text-[9px] opacity-40 font-normal">USDC</span>
                   </p>
                 </div>

@@ -1,45 +1,66 @@
 ﻿import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+import { formatUnits } from 'viem';
 
 export async function GET(request) {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY; // Use Service Role for backend
+
+  if (!supabaseUrl || !supabaseKey) {
+    return Response.json({ spent: "0.00", received: "0.00", bars: [] }, { status: 500 });
+  }
+
   try {
+    const supabase = createClient(supabaseUrl, supabaseKey);
     const { searchParams } = new URL(request.url);
     const address = searchParams.get('address')?.toLowerCase();
 
-    if (!address) {
-      return Response.json({ spent: '0.00', received: '0.00', bars: [25, 45, 30, 70, 55, 90, 40] });
-    }
+    if (!address) return Response.json({ spent: "0.00", received: "0.00", bars: [] });
 
-    const { data: transactions, error } = await supabase
+    // 1. Database se transactions nikaalein
+    const { data, error } = await supabase
       .from('transactions')
       .select('*')
-      .or(`from_addr.eq.${address},to_addr.eq.${address}`);
+      .or(`from_addr.eq.${address},to_addr.eq.${address}`)
+      .order('timestamp', { ascending: false });
 
     if (error) throw error;
 
-    let outflow = 0;
-    let inflow = 0;
+    let totalSpent = 0;
+    let totalReceived = 0;
 
-    transactions.forEach((tx) => {
-      const amount = parseFloat(tx.amount || 0) / 1e6;
-      if (tx.from_addr?.toLowerCase() === address) outflow += amount;
-      if (tx.to_addr?.toLowerCase() === address) inflow += amount;
+    // 2. Hisaab kitab karein (Math Logic)
+    const formattedRequests = (data || []).map(tx => {
+      const isIncoming = tx.to_addr?.toLowerCase() === address;
+      
+      // ✅ DECIMALS FIX: 6 decimals use kar rahe hain
+      const amountNum = parseFloat(formatUnits(BigInt(tx.amount || 0), 6));
+
+      if (isIncoming) {
+        totalReceived += amountNum;
+      } else {
+        totalSpent += amountNum;
+      }
+
+      return {
+        ...tx,
+        amount: amountNum.toFixed(2),
+        isIncoming
+      };
     });
 
-    const max = Math.max(outflow, inflow, 1);
-    const bars = [40, 60, 45, 90, 70, 100, 55].map(v => Math.max(v * (outflow / max || 1), 15));
+    // 3. Graph ke liye dummy bars data (Ya aap real logic bhi daal sakte hain)
+    const bars = [40, 70, 45, 90, 65, 30, 85]; 
 
-    return Response.json({
-      spent: outflow.toFixed(2),
-      received: inflow.toFixed(2),
-      bars
+    // ✅ FINAL RESPONSE: Jo Insights.tsx ko chahiye
+    return Response.json({ 
+      spent: totalSpent.toFixed(2), 
+      received: totalReceived.toFixed(2), 
+      requests: formattedRequests,
+      bars: bars
     });
+
   } catch (err) {
-    console.error("Insights API error:", err.message);
-    return Response.json({ spent: '0.00', received: '0.00', bars: [25, 45, 30, 70, 55, 90, 40] }, { status: 500 });
+    console.error("❌ API Crash:", err.message);
+    return Response.json({ spent: "0.00", received: "0.00", bars: [] }, { status: 500 });
   }
 }

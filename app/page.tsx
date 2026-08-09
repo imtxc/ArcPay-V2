@@ -125,7 +125,7 @@ export default function Dashboard() {
   };
 
     useEffect(() => {
-    // Silent Background Sync: Jab bhi koi site kholega, database refresh hoga
+    // Silent Background Sync
     fetch('/api/indexer').catch(() => console.log("Syncing..."));
   }, []);
   const handleLogout = async () => {
@@ -139,7 +139,6 @@ export default function Dashboard() {
   };
 
   const handleEmbeddedPay = async () => {
-    // SECURITY HANDSHAKE
     if (!username) {
       showToast("Identity Registration Required", "error");
       setActiveModal('register');
@@ -174,7 +173,6 @@ export default function Dashboard() {
          targetAddr = res as string;
       }
 
-      // HIGH SECURITY: CHECKSUM VALIDATION
       try {
         targetAddr = getAddress(targetAddr);
       } catch (e) {
@@ -217,7 +215,6 @@ export default function Dashboard() {
     }
   };
 
-  // --- SECURITY SPLASH SCREEN ---
   if (!ready) {
     return (
       <div className="min-h-screen bg-[#020408] flex flex-col items-center justify-center font-sans">
@@ -368,7 +365,16 @@ export default function Dashboard() {
       <RegisterModal isOpen={activeModal === 'register'} onClose={() => setActiveModal(null)} onRegistered={refetch} />
       <ScannerModal isOpen={activeModal === 'scan'} onClose={() => setActiveModal(null)} onScan={(data) => { setRecipient(data); setActiveModal(null); showToast("Target Located"); }} />
       <ProfileModal isOpen={activeModal === 'profile'} onClose={() => setActiveModal(null)} address={address || ""} username={username} showToast={showToast} />
-      <SettingsModal isOpen={activeModal === 'settings'} onClose={() => setActiveModal(null)} logout={handleLogout} showToast={showToast} />
+      
+      {/* FIX: Added userAddress prop here to clear the error */}
+      <SettingsModal 
+        isOpen={activeModal === 'settings'} 
+        onClose={() => setActiveModal(null)} 
+        logout={handleLogout} 
+        showToast={showToast} 
+        userAddress={address || ""} 
+      />
+      
       <OutgoingModal isOpen={activeModal === 'outgoing'} onClose={() => setActiveModal(null)} address={address || ''} />
       <TransactionsModal 
         isOpen={activeModal === "transactions" || activeModal === "ledger" || activeModal === "history"} 

@@ -1,11 +1,27 @@
 'use client';
+import React from 'react';
 import { 
   LayoutDashboard, Send, HandCoins, Download, History, 
-  User, Settings, LogOut, Zap, PieChart, Users, Bell 
+  User, Settings, LogOut, Zap, PieChart, Users, Bell,
+  type LucideIcon // Added 'type' for better serializability signal
 } from 'lucide-react';
 
-export default function Sidebar({ onAction, logout }: { onAction: (id: string) => void; logout: () => void }) {
-  const menuItems = [
+// MenuItem Interface
+interface MenuItem {
+  id: string;
+  label: string;
+  icon: LucideIcon;
+  section: 'DASHBOARD' | 'PAYMENTS' | 'HISTORY' | 'SETTINGS';
+}
+
+// Sidebar Props Interface - Explicitly defined to satisfy Next.js type checking
+interface SidebarProps {
+  onAction: (id: string) => void;
+  logout: () => void;
+}
+
+export default function Sidebar({ onAction, logout }: SidebarProps) {
+  const menuItems: MenuItem[] = [
     { id: 'dashboard', label: 'Overview', icon: LayoutDashboard, section: 'DASHBOARD' },
     { id: 'insights', label: 'Insights', icon: PieChart, section: 'DASHBOARD' },
     { id: 'contacts', label: 'Saved Hub', icon: Users, section: 'DASHBOARD' },
@@ -19,7 +35,7 @@ export default function Sidebar({ onAction, logout }: { onAction: (id: string) =
     { id: 'settings', label: 'Settings', icon: Settings, section: 'SETTINGS' },
   ];
 
-  const sections = ['DASHBOARD', 'PAYMENTS', 'HISTORY', 'SETTINGS'];
+  const sections = ['DASHBOARD', 'PAYMENTS', 'HISTORY', 'SETTINGS'] as const;
 
   return (
     <aside className="w-72 bg-[#05070a] border-r border-white/5 flex flex-col h-screen font-sans">
@@ -34,18 +50,24 @@ export default function Sidebar({ onAction, logout }: { onAction: (id: string) =
         {sections.map(section => (
           <div key={section} className="space-y-1">
             <p className="px-4 text-[9px] font-black text-slate-700 tracking-[0.3em] mb-4 uppercase">{section}</p>
-            {menuItems.filter(item => item.section === section).map(item => (
-              <button
-                key={item.id}
-                onClick={() => onAction(item.id)}
-                className="w-full flex items-center gap-4 px-4 py-3.5 text-slate-400 hover:text-blue-500 hover:bg-white/5 rounded-2xl transition-all group relative overflow-hidden"
-              >
-                {/* Sleek Active Indicator inside button */}
-                <div className="absolute left-0 top-1/4 bottom-1/4 w-1 bg-blue-500 rounded-r-full opacity-0 group-hover:opacity-100 transition-opacity" />
-                <item.icon size={18} className="group-hover:scale-110 transition-transform" />
-                <span className="text-[11px] font-black uppercase tracking-widest leading-none">{item.label}</span>
-              </button>
-            ))}
+            {menuItems
+              .filter(item => item.section === section)
+              .map(item => {
+                const Icon = item.icon;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => onAction(item.id)}
+                    className="w-full flex items-center gap-4 px-4 py-3.5 text-slate-400 hover:text-blue-500 hover:bg-white/5 rounded-2xl transition-all group relative overflow-hidden"
+                  >
+                    <div className="absolute left-0 top-1/4 bottom-1/4 w-1 bg-blue-500 rounded-r-full opacity-0 group-hover:opacity-100 transition-opacity" />
+                    <Icon size={18} className="group-hover:scale-110 transition-transform" />
+                    <span className="text-[11px] font-black uppercase tracking-widest leading-none">
+                      {item.label}
+                    </span>
+                  </button>
+                );
+              })}
           </div>
         ))}
       </nav>

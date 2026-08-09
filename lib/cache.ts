@@ -13,7 +13,11 @@ export const CACHE_KEYS = {
 const memoryCache: Record<string, CacheStore<unknown>> = {};
 
 export function getStoredCache<T = unknown>(key: string): CacheStore<T> {
+  // 1. Server check: Agar server par hai toh khali object bhej do
+  if (typeof window === 'undefined') return {};
+
   if (memoryCache[key]) return memoryCache[key] as CacheStore<T>;
+
   try {
     const raw = localStorage.getItem(key);
     if (!raw) {
@@ -26,15 +30,16 @@ export function getStoredCache<T = unknown>(key: string): CacheStore<T> {
 
     if (parsed && typeof parsed === 'object') {
       for (const [k, v] of Object.entries(parsed)) {
+        const entry = v as CacheEntry<T>;
         if (
-          v &&
-          typeof v === 'object' &&
-          'val' in v &&
-          'exp' in v &&
-          typeof (v as CacheEntry).exp === 'number' &&
-          (v as CacheEntry).exp > now
+          entry &&
+          typeof entry === 'object' &&
+          'val' in entry &&
+          'exp' in entry &&
+          typeof entry.exp === 'number' &&
+          entry.exp > now
         ) {
-          valid[k] = v as CacheEntry<T>;
+          valid[k] = entry;
         }
       }
     }
@@ -48,12 +53,15 @@ export function getStoredCache<T = unknown>(key: string): CacheStore<T> {
 }
 
 export function updateCache<T>(key: string, itemKey: string, value: T): void {
+  // 2. Server check: Server par storage update nahi ho sakti
+  if (typeof window === 'undefined') return;
+
   try {
     const cache = getStoredCache<T>(key);
     cache[itemKey] = { val: value, exp: Date.now() + 1000 * 60 * 60 * 24 * 7 };
     memoryCache[key] = cache as CacheStore<unknown>;
     localStorage.setItem(key, JSON.stringify(cache));
   } catch {
-    // LocalStorage quota fallback
+    // LocalStorage quota fallback (agar memory bhar jaye toh ignore)
   }
 }
