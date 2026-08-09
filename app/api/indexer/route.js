@@ -9,8 +9,13 @@ const CONTRACTS = [
   { name: 'USDC', address: USDC_ADDRESS, abi: parseAbi(['event Transfer(address indexed from, address indexed to, uint256 value)']), eventName: 'Transfer' },
   { name: 'Registry', address: REGISTRY_ADDRESS, abi: parseAbi(['event UsernameRegistered(address indexed wallet, string username)']), eventName: 'UsernameRegistered' },
   { name: 'PaymentRequest', address: REQUEST_ADDRESS, abi: parseAbi(['event RequestCreated(uint256 indexed id, address indexed requester, address indexed payer, uint256 amount, string requesterUsername, string note)']), eventName: 'RequestCreated' },
-  // ✅ FIXED: Event name changed to 'PaymentSent' to match your latest arcPayAbi
-  { name: 'ArcPay Protocol', address: REQUEST_ADDRESS, abi: parseAbi(['event PaymentSent(address indexed from, address indexed to, uint256 amount, string reference)']), eventName: 'PaymentSent' }
+  // ✅ FIXED: Name changed to _reference (protected keyword fix) and syntax completed
+  { 
+    name: 'ArcPay Protocol', 
+    address: REQUEST_ADDRESS, 
+    abi: parseAbi(['event PaymentSent(address indexed from, address indexed to, uint256 amount, string _reference)']), 
+    eventName: 'PaymentSent' 
+  }
 ];
 
 export async function GET(request) {
@@ -59,7 +64,6 @@ export async function GET(request) {
 
             if (contract.eventName === 'Transfer') { from = args.from; to = args.to; amount = args.value?.toString(); }
             else if (contract.eventName === 'RequestCreated') { from = args.requester; to = args.payer; amount = args.amount?.toString(); }
-            // ✅ UPDATED: Matching the 'PaymentSent' arguments
             else if (contract.eventName === 'PaymentSent') { from = args.from; to = args.to; amount = args.amount?.toString(); }
             else if (contract.eventName === 'UsernameRegistered') { from = args.wallet; to = REGISTRY_ADDRESS; }
 
