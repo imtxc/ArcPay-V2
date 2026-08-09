@@ -18,7 +18,7 @@ const CONTRACTS = [
 ];
 
 export async function GET(request) {
-  const startTime = Date.now(); // Time check shuru
+  const startTime = Date.now();
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -29,23 +29,25 @@ export async function GET(request) {
     const client = createPublicClient({
       transport: fallback([
         http('https://rpc.testnet.arc.network'),
-        http('https://rpc.drpc.testnet.arc.network')
+        http('https://rpc.drpc.testnet.arc.network'),
+        http('https://5042002.rpc.thirdweb.com')
       ])
     });
 
     const { data: lastTx } = await supabase.from('transactions').select('blockNumber').order('blockNumber', { ascending: false }).limit(1).maybeSingle();
     const latestBlock = await client.getBlockNumber();
     
-    // Vercel Safety: Agar naya hai toh sirf 20,000 blocks piche jao (Timeout se bachne ke liye)
-    let targetFromBlock = lastTx?.blockNumber ? BigInt(lastTx.blockNumber) + 1n : latestBlock - BigInt(20000);
-    if (targetFromBlock < 0n) targetFromBlock = 0n;
+    // Safety Range: 20k blocks for first sync to avoid Vercel timeout
+    let current = lastTx?.blockNumber ? BigInt(lastTx.blockNumber) + 1n : latestBlock - BigInt(20000);
+    if (current < 0n) current = 0n;
 
     let totalSynced = 0;
-    const CHUNK_SIZE = 5000n; // Chote batches taaki speed bani rahe
+    const CHUNK_SIZE = 5000n;
+    const blockTimeCache = new Map(); // Cache to avoid multiple getBlock calls
 
-    for (let current = targetFromBlock; current < latestBlock; current += CHUNK_SIZE) {
-      // 🚨 Vercel Timeout Guard: Agar 8 seconds ho gaye hain, toh kaam roko aur response do
-      if (Date.now() - startTime > 8000) break; 
+    while (current <= latestBlock) {
+      // 🚨 Vercel Hobby Guard (9 seconds limit)
+      if (Date.now() - startTime > 9000) break;
 
       const toBlock = (current + CHUNK_SIZE > latestBlock) ? latestBlock : current + CHUNK_SIZE;
 
@@ -60,6 +62,12 @@ export async function GET(request) {
           });
 
           for (const log of logs) {
+            // ✅ GET REAL TIMESTAMP
+            if (!blockTimeCache.has(log.blockNumber)) {
+              const block = await client.getBlock({ blockNumber: log.blockNumber });
+              blockTimeCache.set(log.blockNumber, Number(block.timestamp));
+            }
+
             const args = log.args;
             let from = "0x0", to = "0x0", amount = "0";
 
@@ -68,25 +76,25 @@ export async function GET(request) {
             else if (contract.eventName === 'PaymentSent') { from = args.from; to = args.to; amount = args.amount?.toString(); }
             else if (contract.eventName === 'UsernameRegistered') { from = args.wallet; to = REGISTRY_ADDRESS; }
 
-            await supabase.from('transactions').upsert({
+            const { error: upsertError } = await supabase.from('transactions').upsert({
               hash: log.transactionHash,
               logIndex: log.logIndex,
               from_addr: from?.toLowerCase() || "0x0",
               to_addr: to?.toLowerCase() || "0x0",
               amount: amount || "0",
               blockNumber: log.blockNumber.toString(),
-              timestamp: Math.floor(Date.now() / 1000),
+              timestamp: blockTimeCache.get(log.blockNumber), // Saved Real Time
               eventName: contract.eventName
             }, { onConflict: 'hash, logIndex' });
 
-            totalSynced++;
+            if (!upsertError) totalSynced++;
           }
-        } catch (e) { console.error("Batch Error", e.message); }
+        } catch (e) { console.error("Sync Error:", e.message); }
       }
+      current = toBlock + 1n;
     }
 
-    return Response.json({ success: true, synced: totalSynced, nextStart: latestBlock.toString() });
-
+    return Response.json({ success: true, synced: totalSynced, finished: current > latestBlock });
   } catch (err) {
     return Response.json({ success: false, error: err.message }, { status: 500 });
   }

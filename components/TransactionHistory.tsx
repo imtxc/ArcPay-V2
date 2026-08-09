@@ -1,156 +1,73 @@
 'use client';
-
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { ArrowUpRight, ArrowDownLeft, RefreshCw, Loader2, History, Clock } from 'lucide-react';
-import { type Transaction } from './TransactionsModal';
 
-// FIX: Proper interface with Promise return type to satisfy Next.js linter
-interface TransactionHistoryProps {
-  userAddress: string | undefined;
-  onShowReceipt: (tx: Transaction) => void | Promise<void>; // Added Promise type
-}
+export default function TransactionHistory({ userAddress, onShowReceipt }: any) {
+  const [txs, setTxs] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
 
-export default function TransactionHistory({ 
-  userAddress, 
-  onShowReceipt 
-}: TransactionHistoryProps) {
-  const [txs, setTxs] = useState<Transaction[]>([]);
-  const [syncing, setSyncing] = useState(false);
-  const syncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-  // --- Local Storage Loader ---
-  const loadLocal = useCallback(() => {
-    if (typeof window === 'undefined' || !userAddress) {
-      setTxs([]);
-      return;
-    }
-
-    const key = `ap_h_${userAddress.toLowerCase()}`;
+  const loadData = useCallback(async () => {
+    if (!userAddress) return;
     try {
-      const raw = window.localStorage.getItem(key);
-      if (!raw) {
-        setTxs([]);
-        return;
+      setLoading(true);
+      const res = await fetch(`/api/insights?address=${userAddress.toLowerCase()}`);
+      const data = await res.json();
+      if (data && data.requests) {
+        setTxs(data.requests.slice(0, 4)); // Only show top 4
       }
-      const data = JSON.parse(raw);
-      if (Array.isArray(data)) {
-        const formatted: Transaction[] = data
-          .filter(t => t && t.hash)
-          .map(t => ({
-            ...t,
-            // Handling BigInt safely
-            blockNumber: t.blockNumber !== undefined && t.blockNumber !== null 
-              ? BigInt(t.blockNumber) 
-              : 0n
-          }));
-        setTxs(formatted.slice(0, 4));
-      } else {
-        setTxs([]);
-      }
-    } catch {
-      setTxs([]);
+    } catch (e) {
+      console.error("History Load Error");
+    } finally {
+      setLoading(false);
     }
   }, [userAddress]);
 
-  // --- Sync Request Handler ---
-  const handleSync = () => {
-    if (syncing || typeof window === 'undefined') return;
-    
-    setSyncing(true);
-
-    if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
-    syncTimeoutRef.current = setTimeout(() => {
-      setSyncing(false);
-    }, 12000);
-
-    window.dispatchEvent(new CustomEvent('arcpay_request_sync'));
-  };
-
   useEffect(() => {
-    loadLocal();
-
-    const onDone = (e: Event) => {
-      const customEvent = e as CustomEvent<{ wallet?: string }>;
-      if (customEvent.detail?.wallet === userAddress?.toLowerCase()) {
-        loadLocal();
-        setSyncing(false);
-        if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
-      }
-    };
-
-    if (typeof window !== 'undefined') {
-      window.addEventListener('ap_sync_done', onDone);
-      window.addEventListener('storage', loadLocal);
-    }
-
-    return () => {
-      if (typeof window !== 'undefined') {
-        window.removeEventListener('ap_sync_done', onDone);
-        window.removeEventListener('storage', loadLocal);
-      }
-      if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
-    };
-  }, [userAddress, loadLocal]);
+    loadData();
+    // Auto sync har 30 second mein
+    const interval = setInterval(loadData, 30000);
+    return () => clearInterval(interval);
+  }, [loadData]);
 
   return (
-    <div className="bg-white/5 border border-white/5 rounded-[32px] p-6 text-white">
+    <div className="bg-white/5 border border-white/5 rounded-[32px] p-6 text-white font-sans leading-none">
       <div className="flex items-center justify-between mb-6 px-2">
-        <h3 className="text-xs font-black uppercase tracking-[0.2em] italic text-slate-400 leading-none">
-          Recent Activity
-        </h3>
-        <button 
-          onClick={handleSync} 
-          disabled={syncing || !userAddress} 
-          className="p-2 hover:bg-white/5 rounded-xl transition-all text-slate-500 disabled:opacity-30"
-          title="Refresh History"
-        >
-          {syncing ? (
-            <Loader2 size={14} className="animate-spin text-blue-500" />
-          ) : (
-            <RefreshCw size={14} />
-          )}
+        <h3 className="text-xs font-black uppercase tracking-[0.2em] italic text-slate-400">Recent Activity</h3>
+        <button onClick={loadData} disabled={loading} className="p-2 hover:bg-white/5 rounded-xl transition-all text-slate-500">
+          {loading ? <Loader2 size={14} className="animate-spin text-blue-500" /> : <RefreshCw size={14} />}
         </button>
       </div>
 
       <div className="space-y-3">
-        {txs.length === 0 ? (
-          <div className="py-10 text-center opacity-20 uppercase font-black text-[9px] flex flex-col items-center gap-2 leading-none">
-            <History size={24} /> 
-            {syncing ? "Syncing Blockchain..." : "No Activity Found"}
+        {txs.length === 0 && !loading ? (
+          <div className="py-10 text-center opacity-20 uppercase font-black text-[9px] flex flex-col items-center gap-2">
+            <History size={24} /> No Activity Found
           </div>
         ) : (
-          txs.map((tx) => {
-            const isInc = tx.isIncoming;
-            return (
-              <button 
-                key={`${tx.hash}-${tx.logIndex || 0}`} 
-                onClick={() => onShowReceipt(tx)} 
-                className="w-full flex items-center justify-between p-4 bg-white/5 border border-white/5 rounded-[22px] group hover:border-blue-500/40 hover:bg-white/[0.08] transition-all text-white leading-none"
-              >
-                <div className="flex items-center gap-3 text-left overflow-hidden">
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 shadow-inner ${
-                    isInc ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'
-                  }`}>
-                    {isInc ? <ArrowDownLeft size={18} /> : <ArrowUpRight size={18} />}
-                  </div>
-                  <div className="overflow-hidden leading-tight">
-                    <p className="text-[11px] font-black uppercase italic leading-none truncate max-w-[140px]">
-                      {isInc ? `From ${tx.fromUser || 'Unknown'}` : `To ${tx.toUser || 'Unknown'}`}
-                    </p>
-                    <p className="text-[8px] font-bold text-slate-500 uppercase mt-1 flex items-center gap-1 leading-none">
-                      <Clock size={8} /> 
-                      {tx.timestamp ? new Date(tx.timestamp * 1000).toLocaleDateString() : 'Recent'}
-                    </p>
-                  </div>
+          txs.map((tx, i) => (
+            <button 
+              key={i} 
+              onClick={() => onShowReceipt(tx)} 
+              className="w-full flex items-center justify-between p-4 bg-white/5 border border-white/5 rounded-[22px] group hover:border-blue-500/40 transition-all"
+            >
+              <div className="flex items-center gap-3 text-left">
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                  tx.isIncoming ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'
+                }`}>
+                  {tx.isIncoming ? <ArrowDownLeft size={18} /> : <ArrowUpRight size={18} />}
                 </div>
-                <div className="text-right flex-shrink-0 leading-none">
-                  <p className={`text-[13px] font-black italic ${isInc ? 'text-emerald-500' : 'text-rose-500'} leading-none`}>
-                    {isInc ? '+' : '-'}{tx.amount} <span className="text-[9px] opacity-40 font-normal">USDC</span>
+                <div>
+                  <p className="text-[11px] font-black uppercase italic leading-none">{tx.isIncoming ? 'Incoming' : 'Outgoing'}</p>
+                  <p className="text-[8px] font-bold text-slate-500 uppercase mt-1 flex items-center gap-1">
+                    <Clock size={8} /> {new Date(tx.timestamp * 1000).toLocaleDateString()}
                   </p>
                 </div>
-              </button>
-            );
-          })
+              </div>
+              <p className={`text-[13px] font-black italic ${tx.isIncoming ? 'text-emerald-500' : 'text-rose-500'}`}>
+                {tx.isIncoming ? '+' : '-'}{tx.amount}
+              </p>
+            </button>
+          ))
         )}
       </div>
     </div>
