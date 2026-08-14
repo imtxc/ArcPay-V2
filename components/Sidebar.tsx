@@ -3,10 +3,9 @@ import React from 'react';
 import { 
   LayoutDashboard, Send, HandCoins, Download, History, 
   User, Settings, LogOut, Zap, PieChart, Users, Bell,
-  type LucideIcon // Added 'type' for better serializability signal
+  type LucideIcon 
 } from 'lucide-react';
 
-// MenuItem Interface
 interface MenuItem {
   id: string;
   label: string;
@@ -14,7 +13,6 @@ interface MenuItem {
   section: 'DASHBOARD' | 'PAYMENTS' | 'HISTORY' | 'SETTINGS';
 }
 
-// Sidebar Props Interface - Explicitly defined to satisfy Next.js type checking
 interface SidebarProps {
   onAction: (id: string) => void;
   logout: () => void;
@@ -26,7 +24,8 @@ export default function Sidebar({ onAction, logout }: SidebarProps) {
     { id: 'insights', label: 'Insights', icon: PieChart, section: 'DASHBOARD' },
     { id: 'contacts', label: 'Saved Hub', icon: Users, section: 'DASHBOARD' },
     { id: 'notifications', label: 'Notifications', icon: Bell, section: 'DASHBOARD' },
-    { id: 'history', label: 'Sent Status', icon: Send, section: 'DASHBOARD' },
+    // ✅ FIXED: ID changed from 'history' to 'outgoing' to match page.tsx
+    { id: 'outgoing', label: 'Sent Status', icon: Send, section: 'DASHBOARD' }, 
     { id: 'send', label: 'Send', icon: Send, section: 'PAYMENTS' },
     { id: 'request', label: 'Request', icon: HandCoins, section: 'PAYMENTS' },
     { id: 'receive', label: 'Receive', icon: Download, section: 'PAYMENTS' },

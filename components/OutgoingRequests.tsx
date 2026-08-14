@@ -1,148 +1,205 @@
 ﻿'use client';
+
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { usePublicClient } from 'wagmi';
-import { formatUnits, getAddress } from 'viem';
-import { REGISTRY_ADDRESS, REGISTRY_ABI } from '@/lib/constants';
-import { Loader2, RefreshCw, Clock, ArrowUpRight, CheckCircle2 } from 'lucide-react';
+import { getAddress } from 'viem';
+import {
+  REGISTRY_ADDRESS,
+  REGISTRY_ABI,
+  REQUEST_ADDRESS,
+  REQUEST_ABI
+} from '@/lib/constants';
+
+import {
+  Clock,
+  CheckCircle2,
+  XCircle,
+  ArrowUpRight,
+  Loader2,
+  RefreshCw,
+  ExternalLink,
+  Inbox,
+  ShieldCheck
+} from 'lucide-react';
+
+type RequestItem = {
+  hash: string;
+  amount: string;
+  from_addr: string;
+  to_addr: string;
+  request_id: string | null;
+  displayUser?: string;
+  status: 'Pending' | 'Accepted' | 'Rejected';
+  timestamp: number;
+  statusLabel?: string;
+  signedAmount?: string;
+};
 
 export default function OutgoingRequests({ address }: { address: string }) {
-  const [outgoing, setOutgoing] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
-  const nameCache = useRef<Record<string, string>>({});
-  const publicClient = usePublicClient();
+  const [outgoing, setOutgoing] = useState<RequestItem[]>([])
+  const [loading, setLoading] = useState(false)
 
-  // Unique key for this user's outgoing cache
-  const cacheKey = `ap_og_${address?.toLowerCase()}`;
+  const nameCache = useRef<Record<string, string>>({})
+  const publicClient = usePublicClient()
 
-  const fetchOutgoing = useCallback(async (isInitial = false) => {
-    if (!address || !publicClient) return;
+  const resolveUsername = useCallback(
+    async (wallet: string) => {
+      const normalized = getAddress(wallet)
+      if (nameCache.current[normalized]) return nameCache.current[normalized]
+
+      try {
+        const name = (await publicClient?.readContract({
+          address: REGISTRY_ADDRESS as `0x${string}`,
+          abi: REGISTRY_ABI,
+          functionName: 'getUsername',
+          args: [normalized]
+        })) as string
+
+        nameCache.current[normalized] = name
+          ? `@${name.toUpperCase()}`
+          : `${normalized.slice(0, 6)}...${normalized.slice(-4)}`
+      } catch {
+        nameCache.current[normalized] = `${normalized.slice(0, 6)}...${normalized.slice(-4)}`
+      }
+      return nameCache.current[normalized]
+    },
+    [publicClient]
+  )
+
+  const fetchStatusAndNames = useCallback(async () => {
+    if (!address || !publicClient) return
 
     try {
-      if (isInitial) setLoading(true);
-      
-      const res = await fetch(`/api/outgoing?address=${address}`);
-      const data = await res.json();
-      
-      if (data && data.requests) {
-        // Parallel Metadata Enrichment (Fast Speed)
-        const enriched = await Promise.all(data.requests.map(async (req: any) => {
-          const targetAddr = req.to_addr;
+      setLoading(true)
+      const res = await fetch(`/api/outgoing?address=${address.toLowerCase()}&t=${Date.now()}`, { cache: 'no-store' })
+      const data = await res.json()
+
+      if (!data?.requests || data.requests.length === 0) {
+        setOutgoing([])
+        return
+      }
+
+      const currentUser = getAddress(address).toLowerCase()
+
+      const enriched = await Promise.all(
+        data.requests.map(async (req: any) => {
+          const fromAddr = getAddress(req.from_addr).toLowerCase()
+          const toAddr = getAddress(req.to_addr).toLowerCase()
           
-          if (targetAddr && !nameCache.current[targetAddr]) {
+          // Identify if I am the one requesting money
+          const isRequester = fromAddr === currentUser
+          const otherUser = isRequester ? toAddr : fromAddr
+          const username = await resolveUsername(otherUser)
+
+          let liveStatus: 'Pending' | 'Accepted' | 'Rejected' = 'Pending'
+          
+          // Initial Status Labels
+          let statusLabel = isRequester ? `Requested from ${username}` : `Requested by ${username}`
+          let signedAmount = req.amount // Default no sign
+
+          if (req.request_id) {
             try {
-              const name = await publicClient.readContract({
-                address: REGISTRY_ADDRESS as `0x${string}`,
-                abi: REGISTRY_ABI,
-                functionName: 'getUsername',
-                args: [getAddress(targetAddr)],
-              }) as string;
-              nameCache.current[targetAddr] = name ? `@${name.toUpperCase()}` : `${targetAddr.slice(0, 6)}...`;
-            } catch {
-              nameCache.current[targetAddr] = `${targetAddr.slice(0, 6)}...`;
+              const details: any = await publicClient.readContract({
+                address: REQUEST_ADDRESS as `0x${string}`,
+                abi: REQUEST_ABI,
+                functionName: 'getRequestDetails',
+                args: [BigInt(req.request_id)]
+              })
+
+              const s = Number(details.status)
+              liveStatus = s === 0 ? 'Pending' : s === 1 ? 'Accepted' : 'Rejected'
+
+              if (liveStatus === 'Accepted') {
+                statusLabel = isRequester ? `Accepted by ${username}` : `Paid to ${username}`
+                // LOGIC: If I requested (+), If I was asked to pay (-)
+                signedAmount = isRequester ? `+${req.amount}` : `-${req.amount}`
+              }
+
+              if (liveStatus === 'Rejected') {
+                statusLabel = isRequester ? `Rejected by ${username}` : `Declined request from ${username}`
+                signedAmount = req.amount
+              }
+            } catch (e) {
+              console.error('Live status check failed:', req.request_id, e)
             }
           }
 
           return {
             ...req,
-            displayUser: targetAddr ? (nameCache.current[targetAddr] || `${targetAddr.slice(0, 6)}...`) : 'Unknown Identity'
-          };
-        }));
+            displayUser: username,
+            status: liveStatus,
+            statusLabel,
+            signedAmount
+          }
+        })
+      )
 
-        // 1. Save to State
-        setOutgoing(enriched);
-        
-        // 2. SAVE TO CACHE: Agli baar ke liye instant load
-        localStorage.setItem(cacheKey, JSON.stringify(enriched));
-      }
-    } catch (e) {
-      console.error("Outgoing sync error:", e);
+      setOutgoing(enriched.sort((a, b) => b.timestamp - a.timestamp))
+    } catch (err) {
+      console.error('Outgoing monitor error:', err)
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  }, [address, publicClient, cacheKey]);
+  }, [address, publicClient, resolveUsername])
 
   useEffect(() => {
-    // 1. Load from Cache immediately on mount
-    const cachedData = localStorage.getItem(cacheKey);
-    if (cachedData) {
-      try {
-        setOutgoing(JSON.parse(cachedData));
-      } catch (e) {
-        console.error("Cache parse error");
-      }
-    }
-
-    // 2. Fetch fresh data
-    fetchOutgoing(true);
-
-    const interval = setInterval(() => fetchOutgoing(false), 15000);
-    return () => clearInterval(interval);
-  }, [address, fetchOutgoing, cacheKey]);
+    fetchStatusAndNames()
+    const interval = setInterval(fetchStatusAndNames, 5000) // 5s is safer
+    return () => clearInterval(interval)
+  }, [fetchStatusAndNames])
 
   return (
-    <div className="bg-[#0c0e14] border border-white/5 rounded-[44px] p-8 h-full flex flex-col shadow-3xl text-left border-t-white/10 font-sans leading-none relative overflow-hidden">
-      
-      {/* Header Section */}
-      <div className="flex justify-between items-center px-1 mb-8 relative z-10">
-        <div className="space-y-2">
-          <h4 className="text-[12px] font-black uppercase tracking-[0.3em] text-blue-500 italic">Outgoing Hub</h4>
-          <p className="text-[9px] font-bold text-slate-600 uppercase tracking-widest">Protocol Settlement Monitor</p>
+    <div className="flex flex-col h-full font-sans leading-none overflow-hidden">
+      <div className="flex justify-between items-center mb-6 px-10 pt-6">
+        <div>
+          <h3 className="text-sm font-black uppercase italic tracking-[0.2em] text-blue-500">Sent Monitor</h3>
+          <p className="text-[8px] font-bold text-slate-600 uppercase tracking-widest mt-1">Real-time Request Tracking</p>
         </div>
-        <button 
-          onClick={() => fetchOutgoing(true)} 
-          disabled={loading}
-          className="p-3.5 bg-blue-600/10 text-blue-500 rounded-2xl hover:bg-blue-600 hover:text-white transition-all active:scale-95 disabled:opacity-30"
-        >
-           {loading ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={18} />}
+        <button onClick={fetchStatusAndNames} disabled={loading} className="p-2.5 bg-blue-600/10 text-blue-500 rounded-xl hover:bg-blue-600 hover:text-white transition-all active:scale-90">
+          {loading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
         </button>
       </div>
 
-      {/* List Section */}
-      <div className="space-y-4 overflow-y-auto custom-scrollbar flex-1 pr-1 relative z-10">
+      <div className="flex-1 overflow-y-auto custom-scrollbar px-10 pb-10 space-y-4">
         {outgoing.length === 0 && !loading ? (
-          <div className="py-24 text-center opacity-20 uppercase font-black text-[10px] tracking-[0.4em] text-slate-500 italic flex flex-col items-center gap-4">
-            <Clock size={40} />
-            No Outgoing Settlements
+          <div className="py-24 text-center flex flex-col items-center justify-center space-y-6 opacity-20">
+            <Inbox size={48} />
+            <p className="text-xs font-black uppercase tracking-widest">No Outgoing Requests</p>
           </div>
         ) : (
           outgoing.map((req, i) => (
-            <div key={`${req.hash || i}`} className="bg-white/5 border border-white/5 p-6 rounded-[36px] flex justify-between items-center group hover:bg-white/[0.08] transition-all shadow-2xl border-t-white/10">
-               <div className="space-y-2 truncate pr-4 text-left">
-                  <p className="text-base font-black text-white uppercase italic leading-none flex items-center gap-2">
-                    <ArrowUpRight size={14} className="text-blue-500"/>
-                    {req.displayUser}
+            <div key={`${req.hash}-${i}`} className="bg-white/5 border border-white/10 p-6 rounded-[36px] flex justify-between items-center">
+              <div className="space-y-3 text-left">
+                <div className="flex items-center gap-2">
+                  <ArrowUpRight size={14} className="text-blue-500" />
+                  <p className="text-base font-black uppercase italic text-white">{req.displayUser}</p>
+                </div>
+                <p className="text-[11px] text-slate-400 font-bold uppercase tracking-wide">{req.statusLabel}</p>
+                <div className="flex items-center gap-3">
+                  <p className={`text-2xl font-black italic ${
+                      req.signedAmount?.startsWith('+') ? 'text-emerald-400' : 
+                      req.signedAmount?.startsWith('-') ? 'text-rose-400' : 'text-slate-300'
+                    }`}>
+                    {req.signedAmount}
+                    <span className="text-[10px] opacity-30 font-bold uppercase ml-1">USDC</span>
                   </p>
-                  <p className="text-2xl font-black italic text-slate-300 leading-none tracking-tighter">
-                    {formatUnits(BigInt(req.amount || 0), 6)} <span className="text-xs opacity-20 not-italic uppercase tracking-normal ml-1">USDC</span>
-                  </p>
-               </div>
-               
-               <div className="flex flex-col items-end gap-2 shrink-0">
-                  <div className="px-4 py-2 rounded-2xl text-[9px] font-black uppercase tracking-widest shadow-xl flex items-center gap-2 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
-                    <CheckCircle2 size={10} /> Confirmed
-                  </div>
-                  <span className="text-[8px] font-bold text-slate-700 uppercase tracking-tighter">On-Chain Verified</span>
-               </div>
+                  <a href={`https://testnet.arcscan.app/tx/${req.hash}`} target="_blank" rel="noopener noreferrer" className="text-[8px] bg-white/5 px-2 py-1.5 rounded-lg text-blue-400 font-black uppercase hover:bg-blue-600 hover:text-white transition-all border border-white/5 flex items-center gap-1">
+                    Proof <ExternalLink size={8} />
+                  </a>
+                </div>
+              </div>
+              <div className={`px-4 py-2.5 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 border ${
+                  req.status === 'Pending' ? 'bg-amber-500/10 text-amber-500 border-amber-500/20' : 
+                  req.status === 'Accepted' ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 
+                  'bg-rose-500/10 text-rose-500 border-rose-500/20'
+                }`}>
+                {req.status === 'Pending' ? <Clock size={14} /> : req.status === 'Accepted' ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
+                {req.status}
+              </div>
             </div>
           ))
         )}
       </div>
-
-      {/* Security Footer */}
-      <div className="mt-6 pt-6 border-t border-white/5 flex items-center justify-center gap-2 opacity-20">
-         <ShieldCheck size={12} className="text-slate-500" />
-         <p className="text-[8px] font-black uppercase tracking-widest">End-to-End Encrypted Settlement History</p>
-      </div>
     </div>
-  );
-}
-
-// Minimal Icon for footer
-function ShieldCheck({ size, className }: any) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
-      <path d="m9 12 2 2 4-4" />
-    </svg>
-  );
+  )
 }
